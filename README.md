@@ -59,6 +59,16 @@ The Lambda execution role needs permissions to:
 - `sqs:SendMessage` on the configured queue.
 - `dynamodb:UpdateItem` on the configured table.
 
+## Explicação (visão geral em português)
+
+1. **Recepção do evento** – O Lambda exposto pelo API Gateway recebe o corpo JSON e extraí o payload do campo `body` quando ele vem em formato string.
+2. **Validação** – O módulo `validation.py` garante que o evento siga o contrato SVRS: código `110111`, versões `1.00/1.01`, número sequencial positivo, protocolo, motivo e timestamp ISO 8601 com fuso horário, além de exigir os dados do emissor.
+3. **Correlação e enfileiramento** – O handler gera ou reutiliza um `correlationId` (de cabeçalho, corpo ou UUID novo) e publica o payload validado no SQS configurado (`SQS_QUEUE_URL`), anexando o ID também como atributo da mensagem para rastreabilidade.
+4. **Persistência no DynamoDB** – Em seguida, a função atualiza (ou cria) um registro na tabela (`DCE_TABLE_NAME`) usando as chaves configuráveis (`DCE_TABLE_PK` e `DCE_TABLE_SK`). O item recebe o status `CANCELLED`, o `correlationId`, o código do evento, o timestamp original e um `updatedAt` calculado no servidor.
+5. **Tratamento de erros** – Falhas de validação retornam HTTP 400; erros do SQS ou DynamoDB retornam HTTP 502; qualquer exceção inesperada retorna HTTP 500, mantendo logs estruturados para diagnóstico.
+
+Com isso, o fluxo cobre desde a validação rígida do contrato até a orquestração dos efeitos colaterais (fila e banco), deixando filas, tabelas e chaves totalmente configuráveis por variáveis de ambiente.
+
 ## Development
 
 ### Installing dependencies
@@ -74,3 +84,19 @@ pip install -r requirements-dev.txt
 ```bash
 pytest
 ```
+
+### Local end-to-end demo (sem AWS)
+
+Para exercitar o fluxo completo sem precisar de recursos reais da AWS, use o script com `moto` que cria filas e tabelas em memória:
+
+```bash
+pip install -r requirements-dev.txt  # garante que "moto" está instalado
+python scripts/local_flow_demo.py
+```
+
+O script:
+
+1. Sobe SQS e DynamoDB falsos via `moto`.
+2. Configura variáveis de ambiente (`SQS_QUEUE_URL` e `DCE_TABLE_NAME`) apontando para esses recursos.
+3. Invoca o handler com um payload de cancelamento de exemplo.
+4. Exibe a resposta do Lambda, a mensagem enfileirada e o item gravado no DynamoDB, permitindo verificar o comportamento sem depender da AWS.
