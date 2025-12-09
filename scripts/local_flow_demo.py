@@ -23,6 +23,7 @@ PAYLOAD = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
     "issuer": {"cnpj": "12345678000199"},
     "metadata": {"state": "RS"},
+    "clientId": "demo-client",
 }
 
 
@@ -52,9 +53,11 @@ def main() -> None:
         os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
         os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
         os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
+        os.environ.setdefault("API_AUTH_TOKEN", "local-token")
+        os.environ.setdefault("ALLOWED_CLIENT_IDS", PAYLOAD["clientId"])
 
         # Invoke the handler just like API Gateway would
-        event = {"body": json.dumps(PAYLOAD)}
+        event = {"body": json.dumps(PAYLOAD), "headers": {"Authorization": "Bearer local-token"}}
         response = handler(event, None)
         print("Lambda response:\n", json.dumps(response, indent=2))
 
