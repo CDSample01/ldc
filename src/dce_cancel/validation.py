@@ -14,29 +14,48 @@ class ValidationError(Exception):
     """Raised when payload validation fails."""
 
 
+class AuthorizationError(Exception):
+    """Raised when authorization/ownership rules are broken."""
+
+    def __init__(self, message: str, status_code: int = 403) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 @dataclass
 class ValidatedPayload:
     dce_id: str
     event: Dict[str, Any]
     timestamp: str
+    timestamp_dt: dt.datetime
     issuer: Dict[str, Any]
     metadata: Dict[str, Any]
+    client_id: str
 
 
-_ISO_FORMATS = ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ"]
+_ISO_FORMATS = [
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%dT%H:%M:%S.%fZ",
+]
 
 
-def _ensure_isoformat(value: str) -> None:
+def _ensure_isoformat(value: str) -> dt.datetime:
     for fmt in _ISO_FORMATS:
         try:
-            dt.datetime.strptime(value, fmt)
-            return
+            parsed = dt.datetime.strptime(value, fmt)
+            if parsed.tzinfo is None and value.endswith("Z"):
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            return parsed
         except ValueError:
             continue
     raise ValidationError("timestamp must be ISO 8601 with timezone information")
 
 
-def validate_payload(payload: Dict[str, Any]) -> ValidatedPayload:
+def validate_payload(
+    payload: Dict[str, Any], cancellation_deadline_minutes: int | None = None
+) -> ValidatedPayload:
     if not isinstance(payload, dict):
         raise ValidationError("payload must be a JSON object")
 
@@ -44,6 +63,7 @@ def validate_payload(payload: Dict[str, Any]) -> ValidatedPayload:
     event = payload.get("event")
     timestamp = payload.get("timestamp")
     issuer = payload.get("issuer")
+    client_id = payload.get("clientId")
 
     if not dce_id:
         raise ValidationError("dceId is required")
@@ -51,13 +71,16 @@ def validate_payload(payload: Dict[str, Any]) -> ValidatedPayload:
         raise ValidationError("event must be an object")
     if not timestamp:
         raise ValidationError("timestamp is required")
-    _ensure_isoformat(timestamp)
+    timestamp_dt = _ensure_isoformat(timestamp)
 
     event_code = str(event.get("code")) if event.get("code") is not None else None
     schema_version = event.get("schemaVersion")
     sequence_number = event.get("sequenceNumber")
     reason = event.get("reason")
     protocol = event.get("protocol")
+
+    if not client_id or not isinstance(client_id, str):
+        raise ValidationError("clientId is required")
 
     if event_code not in ALLOWED_EVENT_CODES:
         raise ValidationError(
@@ -80,10 +103,18 @@ def validate_payload(payload: Dict[str, Any]) -> ValidatedPayload:
 
     if not isinstance(issuer, dict):
         raise ValidationError("issuer must be an object")
+    if not issuer.get("cnpj"):
+        raise ValidationError("issuer.cnpj is required")
 
     metadata = payload.get("metadata") or {}
     if not isinstance(metadata, dict):
         raise ValidationError("metadata, when provided, must be an object")
+
+    if cancellation_deadline_minutes is not None:
+        now = dt.datetime.now(dt.timezone.utc)
+        deadline = now - dt.timedelta(minutes=cancellation_deadline_minutes)
+        if timestamp_dt < deadline:
+            raise ValidationError("Cancellation window expired for the provided timestamp")
 
     return ValidatedPayload(
         dce_id=str(dce_id),
@@ -95,6 +126,8 @@ def validate_payload(payload: Dict[str, Any]) -> ValidatedPayload:
             "protocol": str(protocol),
         },
         timestamp=timestamp,
+        timestamp_dt=timestamp_dt,
         issuer=issuer,
         metadata=metadata,
+        client_id=client_id,
     )

@@ -17,6 +17,9 @@ Deploy the Lambda with the source under `src/` and configure the following envir
 - `DCE_TABLE_NAME` – DynamoDB table to store DCe cancellation status.
 - `DCE_TABLE_PK` (optional, default `pk`) – Partition key attribute name.
 - `DCE_TABLE_SK` (optional, default `sk`) – Sort key attribute name.
+- `API_AUTH_TOKEN` – Shared bearer token required in the `Authorization: Bearer <token>` header.
+- `ALLOWED_CLIENT_IDS` – Comma-separated list of client IDs allowed to submit cancellations.
+- `CANCELLATION_DEADLINE_MINUTES` (optional, default `1440`) – Maximum age of the event timestamp for cancellations.
 
 The Lambda expects API Gateway or direct invocation payloads with the following structure:
 
@@ -33,6 +36,7 @@ The Lambda expects API Gateway or direct invocation payloads with the following 
   "timestamp": "2024-01-01T12:00:00+00:00", // ISO 8601 with timezone
   "issuer": {"cnpj": "12345678000199"},
   "metadata": {"state": "RS"}
+  "clientId": "partner-123"
 }
 ```
 
@@ -44,11 +48,14 @@ Messages published to SQS include the validated payload plus a `correlationId` (
 
 The Lambda upserts a record keyed by `pk="DCE#{dceId}"` and `sk="LATEST"` (or the configured attribute names) and updates:
 
-- `status` → `CANCELLED`
+- `status` → `CANCELLATION_REQUESTED`
+- `operationStatus` → `RECEIVED`
 - `correlationId`
 - `eventCode`
 - `eventTimestamp`
-- `updatedAt` (server-side timestamp)
+- `updatedAt`/`requestedAt` (server-side timestamps)
+- `cancellationReason`
+- `clientId`
 
 This approach preserves a single authoritative cancellation status per DCe while keeping keys configurable.
 
@@ -64,7 +71,7 @@ The Lambda execution role needs permissions to:
 1. **Recepção do evento** – O Lambda exposto pelo API Gateway recebe o corpo JSON e extraí o payload do campo `body` quando ele vem em formato string.
 2. **Validação** – O módulo `validation.py` garante que o evento siga o contrato SVRS: código `110111`, versões `1.00/1.01`, número sequencial positivo, protocolo, motivo e timestamp ISO 8601 com fuso horário, além de exigir os dados do emissor.
 3. **Correlação e enfileiramento** – O handler gera ou reutiliza um `correlationId` (de cabeçalho, corpo ou UUID novo) e publica o payload validado no SQS configurado (`SQS_QUEUE_URL`), anexando o ID também como atributo da mensagem para rastreabilidade.
-4. **Persistência no DynamoDB** – Em seguida, a função atualiza (ou cria) um registro na tabela (`DCE_TABLE_NAME`) usando as chaves configuráveis (`DCE_TABLE_PK` e `DCE_TABLE_SK`). O item recebe o status `CANCELLED`, o `correlationId`, o código do evento, o timestamp original e um `updatedAt` calculado no servidor.
+4. **Persistência no DynamoDB** – Em seguida, a função atualiza (ou cria) um registro na tabela (`DCE_TABLE_NAME`) usando as chaves configuráveis (`DCE_TABLE_PK` e `DCE_TABLE_SK`). O item recebe `status`/`operationStatus` para o cancelamento, `correlationId`, código do evento, timestamps (`eventTimestamp`, `requestedAt`/`updatedAt`), além do `cancellationReason` e `clientId`.
 5. **Tratamento de erros** – Falhas de validação retornam HTTP 400; erros do SQS ou DynamoDB retornam HTTP 502; qualquer exceção inesperada retorna HTTP 500, mantendo logs estruturados para diagnóstico.
 
 Com isso, o fluxo cobre desde a validação rígida do contrato até a orquestração dos efeitos colaterais (fila e banco), deixando filas, tabelas e chaves totalmente configuráveis por variáveis de ambiente.
