@@ -7,9 +7,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import BotoCoreError, ClientError
 
-from adapters.clients import dynamodb_client, sqs_client
+from adapters.clients import dynamodb_client, dynamodb_resource, sqs_client
 from config.config import EnvConfig
 from domain.services.validation import validate_payload
 from exceptions import AuthorizationError, ValidationError
@@ -96,6 +97,18 @@ def _upsert_cancellation_status(config: EnvConfig, payload: Dict[str, Any], corr
     )
 
 
+def _authorize_client(access_key: str, client_id: str, table_name: str) -> None:
+    table = dynamodb_resource().Table(table_name)
+    response = table.query(
+        KeyConditionExpression=Key("accessKey").eq(access_key),
+        FilterExpression=Attr("clientId").eq(client_id),
+        Limit=1,
+    )
+
+    if not response.get("Items"):
+        raise AuthorizationError("clientId is not authorized to cancel this DCe")
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     logger.info("Received event: %s", event)
     try:
@@ -106,8 +119,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             payload_dict, cancellation_deadline_minutes=config.cancellation_deadline_minutes
         )
 
-        if config.allowed_client_ids and validated.client_id not in config.allowed_client_ids:
-            raise AuthorizationError("clientId is not authorized to cancel this DCe")
+        _authorize_client(validated.dce_id, validated.client_id, config.log_dce_table_name)
 
         correlation_id = (
             event.get("headers", {}).get("X-Correlation-Id")
