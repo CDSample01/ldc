@@ -15,3 +15,7 @@ def sqs_client():
 
 def dynamodb_client():
     return _get_session().client("dynamodb")
+
+
+def dynamodb_resource():
+    return _get_session().resource("dynamodb")
