@@ -18,6 +18,8 @@ from exceptions import AuthorizationError, ValidationError
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+EVENT_CODE = "110111"
+
 
 def _parse_event(event: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(event, dict) and "body" in event:
@@ -53,6 +55,22 @@ def _authenticate_request(event: Dict[str, Any], config: EnvConfig) -> None:
         raise AuthorizationError("Unauthorized", status_code=401)
 
 
+def _extract_client_id(event: Dict[str, Any], config: EnvConfig) -> str:
+    headers = event.get("headers") if isinstance(event, dict) else None
+    normalized_headers = {k.lower(): v for k, v in headers.items()} if isinstance(headers, dict) else {}
+
+    client_id = None
+    for key in ("client-id", "client_id", "clientid", "x-client-id"):
+        if key in normalized_headers:
+            client_id = normalized_headers.get(key)
+            break
+
+    if not client_id or not isinstance(client_id, str):
+        raise AuthorizationError("clientId header is required", status_code=401)
+
+    return client_id
+
+
 def _enqueue_cancellation(config: EnvConfig, payload: Dict[str, Any], correlation_id: str) -> None:
     message_body = json.dumps({**payload, "correlationId": correlation_id})
     sqs_client().send_message(
@@ -73,7 +91,7 @@ def _upsert_cancellation_status(config: EnvConfig, payload: Dict[str, Any], corr
     client.update_item(
         TableName=config.dce_table_name,
         Key={
-            config.partition_key: {"S": f"DCE#{payload['dceId']}"},
+            config.partition_key: {"S": f"DCE#{payload['id']}"},
             config.sort_key: {"S": "LATEST"},
         },
         UpdateExpression=(
@@ -86,11 +104,11 @@ def _upsert_cancellation_status(config: EnvConfig, payload: Dict[str, Any], corr
         ExpressionAttributeValues={
             ":status": {"S": "CANCELLATION_REQUESTED"},
             ":correlationId": {"S": correlation_id},
-            ":eventCode": {"S": payload["event"]["code"]},
+            ":eventCode": {"S": EVENT_CODE},
             ":updatedAt": {"S": now},
-            ":eventTimestamp": {"S": payload["timestamp"]},
+            ":eventTimestamp": {"S": payload["eventCancelDate"]},
             ":requestedAt": {"S": now},
-            ":reason": {"S": payload["event"]["reason"]},
+            ":reason": {"S": payload["cancelReason"]},
             ":operationStatus": {"S": "RECEIVED"},
             ":clientId": {"S": payload["clientId"]},
         },
@@ -115,11 +133,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         payload_dict = _parse_event(event)
         config = EnvConfig.load()
         _authenticate_request(event, config)
+        client_id = _extract_client_id(event, config)
         validated = validate_payload(
             payload_dict, cancellation_deadline_minutes=config.cancellation_deadline_minutes
         )
+        validated.client_id = client_id
 
-        _authorize_client(validated.dce_id, validated.client_id, config.log_dce_table_name)
+        _authorize_client(validated.document_id, validated.client_id, config.log_dce_table_name)
 
         correlation_id = (
             event.get("headers", {}).get("X-Correlation-Id")
@@ -128,12 +148,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         ) or payload_dict.get("correlationId") or str(uuid.uuid4())
 
         enqueue_payload = {
-            "dceId": validated.dce_id,
-            "event": validated.event,
-            "timestamp": validated.timestamp,
-            "issuer": validated.issuer,
-            "metadata": validated.metadata,
+            "id": validated.document_id,
+            "eventCancelDate": validated.event_cancel_date,
+            "cancelReason": validated.cancel_reason,
             "clientId": validated.client_id,
+            "eventCode": EVENT_CODE,
         }
 
         _enqueue_cancellation(config, enqueue_payload, correlation_id)
@@ -142,7 +161,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(
             "Cancellation request recorded",
             extra={
-                "dceId": validated.dce_id,
+                "dceId": validated.document_id,
                 "correlationId": correlation_id,
                 "clientId": validated.client_id,
             },
@@ -152,7 +171,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             201,
             {
                 "message": "Cancellation received",
-                "dceId": validated.dce_id,
+                "dceId": validated.document_id,
                 "correlationId": correlation_id,
             },
         )
