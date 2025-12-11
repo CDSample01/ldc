@@ -9,9 +9,10 @@ from typing import Any, Dict
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from .clients import dynamodb_client, sqs_client
-from .config import EnvConfig
-from .validation import AuthorizationError, ValidationError, validate_payload
+from adapters.clients import dynamodb_client, sqs_client
+from config.config import EnvConfig
+from domain.services.validation import validate_payload
+from exceptions import AuthorizationError, ValidationError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -32,7 +33,7 @@ def _build_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body),
-}
+    }
 
 
 def _authenticate_request(event: Dict[str, Any], config: EnvConfig) -> None:
@@ -101,7 +102,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         payload_dict = _parse_event(event)
         config = EnvConfig.load()
         _authenticate_request(event, config)
-        validated = validate_payload(payload_dict, cancellation_deadline_minutes=config.cancellation_deadline_minutes)
+        validated = validate_payload(
+            payload_dict, cancellation_deadline_minutes=config.cancellation_deadline_minutes
+        )
 
         if config.allowed_client_ids and validated.client_id not in config.allowed_client_ids:
             raise AuthorizationError("clientId is not authorized to cancel this DCe")

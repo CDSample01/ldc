@@ -2,36 +2,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
 from typing import Any, Dict
 
+from exceptions import ValidationError
+from domain.models.payload import ValidatedPayload
 
 ALLOWED_EVENT_CODES = {"110111"}
 ALLOWED_SCHEMA_VERSIONS = {"1.00", "1.01"}
-
-
-class ValidationError(Exception):
-    """Raised when payload validation fails."""
-
-
-class AuthorizationError(Exception):
-    """Raised when authorization/ownership rules are broken."""
-
-    def __init__(self, message: str, status_code: int = 403) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-
-
-@dataclass
-class ValidatedPayload:
-    dce_id: str
-    event: Dict[str, Any]
-    timestamp: str
-    timestamp_dt: dt.datetime
-    issuer: Dict[str, Any]
-    metadata: Dict[str, Any]
-    client_id: str
-
 
 _ISO_FORMATS = [
     "%Y-%m-%dT%H:%M:%S%z",
