@@ -8,25 +8,13 @@ import lambada_handler
 
 
 VALID_PAYLOAD = {
-    "dceId": "DCE123",
-    "event": {
-        "code": "110111",
-        "schemaVersion": "1.00",
-        "sequenceNumber": 1,
-        "reason": "Cancelamento por duplicidade",
-        "protocol": "123456789012345",
-    },
-    "timestamp": "2024-01-01T12:00:00+00:00",
-    "issuer": {"cnpj": "12345678000199"},
-    "metadata": {"state": "RS"},
-    "clientId": "partner-123",
+    "id": "1234567890",
+    "cancelReason": "Solicitação de cancelamento por duplicidade.",
 }
 
 
 def _fresh_payload() -> dict:
-    payload = json.loads(json.dumps(VALID_PAYLOAD))
-    payload["timestamp"] = datetime.now(timezone.utc).isoformat()
-    return payload
+    return json.loads(json.dumps(VALID_PAYLOAD))
 
 
 def _mock_client():
@@ -57,7 +45,10 @@ def test_successful_enqueue_and_update(monkeypatch):
         "lambada_handler.dynamodb_client", return_value=dynamodb_mock
     ), patch("lambada_handler.dynamodb_resource", return_value=dynamodb_resource_mock):
         response = lambada_handler.handler(
-            {"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}},
+            {
+                "body": json.dumps(payload),
+                "headers": {"Authorization": "Bearer secret", "Client-Id": "partner-123"},
+            },
             None,
         )
 
@@ -69,14 +60,18 @@ def test_successful_enqueue_and_update(monkeypatch):
     call_kwargs = sqs_mock.send_message.call_args.kwargs
     assert call_kwargs["QueueUrl"] == "https://sqs.queue"
     body = json.loads(call_kwargs["MessageBody"])
-    assert body["dceId"] == payload["dceId"]
-    assert body["event"]["code"] == "110111"
+    assert body["id"] == payload["id"]
+    assert body["eventCode"] == "110111"
 
     dynamodb_mock.update_item.assert_called_once()
     assert dynamodb_mock.update_item.call_args.kwargs["TableName"] == "dce-table"
     update_values = dynamodb_mock.update_item.call_args.kwargs["ExpressionAttributeValues"]
     assert update_values[":clientId"]["S"] == "partner-123"
     assert update_values[":status"]["S"] == "CANCELLATION_REQUESTED"
+    event_timestamp = update_values[":eventTimestamp"]["S"]
+    parsed_event_timestamp = datetime.fromisoformat(event_timestamp.replace("Z", "+00:00"))
+    assert (datetime.now(timezone.utc) - parsed_event_timestamp).total_seconds() < 30
+    assert update_values[":reason"]["S"] == payload["cancelReason"]
 
 
 def test_validation_failure_returns_400(monkeypatch):
@@ -88,7 +83,13 @@ def test_validation_failure_returns_400(monkeypatch):
     with patch("lambada_handler.sqs_client") as sqs_mock, patch(
         "lambada_handler.dynamodb_client"
     ) as dynamodb_mock:
-        response = lambada_handler.handler({"body": json.dumps({}), "headers": {"Authorization": "Bearer secret"}}, None)
+        response = lambada_handler.handler(
+            {
+                "body": json.dumps({}),
+                "headers": {"Authorization": "Bearer secret", "Client-Id": "partner-123"},
+            },
+            None,
+        )
 
     assert response["statusCode"] == 400
     sqs_mock.return_value.send_message.assert_not_called()
@@ -112,27 +113,15 @@ def test_sqs_failure_returns_502(monkeypatch):
         "lambada_handler.dynamodb_client", return_value=dynamodb_mock
     ), patch("lambada_handler.dynamodb_resource", return_value=dynamodb_resource_mock):
         response = lambada_handler.handler(
-            {"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}},
+            {
+                "body": json.dumps(payload),
+                "headers": {"Authorization": "Bearer secret", "Client-Id": "partner-123"},
+            },
             None,
         )
 
     assert response["statusCode"] == 502
     dynamodb_mock.update_item.assert_not_called()
-
-
-def test_rejects_expired_timestamp(monkeypatch):
-    monkeypatch.setenv("SQS_QUEUE_URL", "https://sqs.queue")
-    monkeypatch.setenv("DCE_TABLE_NAME", "dce-table")
-    monkeypatch.setenv("API_AUTH_TOKEN", "secret")
-    monkeypatch.setenv("CANCELLATION_DEADLINE_MINUTES", "60")
-    expired_payload = {**_fresh_payload(), "timestamp": "2023-01-01T00:00:00+00:00"}
-
-    response = lambada_handler.handler(
-        {"body": json.dumps(expired_payload), "headers": {"Authorization": "Bearer secret"}},
-        None,
-    )
-
-    assert response["statusCode"] == 400
 
 
 def test_rejects_unauthorized_client(monkeypatch):
@@ -147,7 +136,10 @@ def test_rejects_unauthorized_client(monkeypatch):
 
     with patch("lambada_handler.dynamodb_resource", return_value=dynamodb_resource_mock):
         response = lambada_handler.handler(
-            {"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}},
+            {
+                "body": json.dumps(payload),
+                "headers": {"Authorization": "Bearer secret", "Client-Id": "partner-123"},
+            },
             None,
         )
 
@@ -160,6 +152,17 @@ def test_requires_auth_header(monkeypatch):
     monkeypatch.setenv("API_AUTH_TOKEN", "secret")
     payload = _fresh_payload()
 
-    response = lambada_handler.handler({"body": json.dumps(payload)}, None)
+    response = lambada_handler.handler({"body": json.dumps(payload), "headers": {"Client-Id": "partner-123"}}, None)
+
+    assert response["statusCode"] == 401
+
+
+def test_requires_client_id_header(monkeypatch):
+    monkeypatch.setenv("SQS_QUEUE_URL", "https://sqs.queue")
+    monkeypatch.setenv("DCE_TABLE_NAME", "dce-table")
+    monkeypatch.setenv("API_AUTH_TOKEN", "secret")
+    payload = _fresh_payload()
+
+    response = lambada_handler.handler({"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}}, None)
 
     assert response["statusCode"] == 401
