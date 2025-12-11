@@ -1,6 +1,3 @@
-"""Demonstrate the cancellation flow locally using moto (no AWS resources required)."""
-from __future__ import annotations
-
 import json
 import os
 from datetime import datetime, timezone
@@ -8,7 +5,7 @@ from datetime import datetime, timezone
 import boto3
 from moto import mock_aws
 
-from dce_cancel.handler import handler
+import lambada_handler
 
 
 PAYLOAD = {
@@ -58,7 +55,7 @@ def main() -> None:
 
         # Invoke the handler just like API Gateway would
         event = {"body": json.dumps(PAYLOAD), "headers": {"Authorization": "Bearer local-token"}}
-        response = handler(event, None)
+        response = lambada_handler.handler(event, None)
         print("Lambda response:\n", json.dumps(response, indent=2))
 
         # Read back what went to SQS and DynamoDB

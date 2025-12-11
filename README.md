@@ -4,10 +4,10 @@ This repository contains a Python AWS Lambda handler that validates DCe cancella
 
 ## Package layout
 
-- `src/dce_cancel/handler.py` – Lambda entry point that validates payloads, dispatches messages to SQS, and upserts cancellation status in DynamoDB.
-- `src/dce_cancel/validation.py` – Request validation aligned with the expected DCe cancellation event shape (event code `110111`, schema versions `1.00`/`1.01`, sequence number, protocol, and reason fields).
-- `src/dce_cancel/config.py` – Environment-driven configuration for queue/table names and key attributes.
-- `src/dce_cancel/clients.py` – Thin factories for SQS and DynamoDB boto3 clients.
+- `lambada_handler.py` – Lambda entry point that validates payloads, dispatches messages to SQS, and upserts cancellation status in DynamoDB.
+- `src/domain/validation.py` – Request validation aligned with the expected DCe cancellation event shape (event code `110111`, schema versions `1.00`/`1.01`, sequence number, protocol, and reason fields).
+- `src/config/config.py` – Environment-driven configuration for queue/table names and key attributes.
+- `src/adapters/clients.py` – Thin factories for SQS and DynamoDB boto3 clients.
 
 ## Deployment and configuration
 

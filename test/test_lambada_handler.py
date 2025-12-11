@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from botocore.exceptions import ClientError
 
-from dce_cancel import handler as lambda_handler
+import lambada_handler
 
 
 VALID_PAYLOAD = {
@@ -45,10 +45,10 @@ def test_successful_enqueue_and_update(monkeypatch):
     dynamodb_mock = _mock_client()
     payload = _fresh_payload()
 
-    with patch("dce_cancel.handler.sqs_client", return_value=sqs_mock), patch(
-        "dce_cancel.handler.dynamodb_client", return_value=dynamodb_mock
+    with patch("lambada_handler.sqs_client", return_value=sqs_mock), patch(
+        "lambada_handler.dynamodb_client", return_value=dynamodb_mock
     ):
-        response = lambda_handler.handler(
+        response = lambada_handler.handler(
             {"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}},
             None,
         )
@@ -75,10 +75,10 @@ def test_validation_failure_returns_400(monkeypatch):
     monkeypatch.setenv("API_AUTH_TOKEN", "secret")
     monkeypatch.setenv("CANCELLATION_DEADLINE_MINUTES", "525600")
 
-    with patch("dce_cancel.handler.sqs_client") as sqs_mock, patch(
-        "dce_cancel.handler.dynamodb_client"
+    with patch("lambada_handler.sqs_client") as sqs_mock, patch(
+        "lambada_handler.dynamodb_client"
     ) as dynamodb_mock:
-        response = lambda_handler.handler({"body": json.dumps({}), "headers": {"Authorization": "Bearer secret"}}, None)
+        response = lambada_handler.handler({"body": json.dumps({}), "headers": {"Authorization": "Bearer secret"}}, None)
 
     assert response["statusCode"] == 400
     sqs_mock.return_value.send_message.assert_not_called()
@@ -97,10 +97,10 @@ def test_sqs_failure_returns_502(monkeypatch):
     dynamodb_mock = _mock_client()
     payload = _fresh_payload()
 
-    with patch("dce_cancel.handler.sqs_client", return_value=sqs_mock), patch(
-        "dce_cancel.handler.dynamodb_client", return_value=dynamodb_mock
+    with patch("lambada_handler.sqs_client", return_value=sqs_mock), patch(
+        "lambada_handler.dynamodb_client", return_value=dynamodb_mock
     ):
-        response = lambda_handler.handler(
+        response = lambada_handler.handler(
             {"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}},
             None,
         )
@@ -116,7 +116,7 @@ def test_rejects_expired_timestamp(monkeypatch):
     monkeypatch.setenv("CANCELLATION_DEADLINE_MINUTES", "60")
     expired_payload = {**_fresh_payload(), "timestamp": "2023-01-01T00:00:00+00:00"}
 
-    response = lambda_handler.handler(
+    response = lambada_handler.handler(
         {"body": json.dumps(expired_payload), "headers": {"Authorization": "Bearer secret"}},
         None,
     )
@@ -132,7 +132,7 @@ def test_rejects_unauthorized_client(monkeypatch):
     monkeypatch.setenv("CANCELLATION_DEADLINE_MINUTES", "525600")
     payload = _fresh_payload()
 
-    response = lambda_handler.handler(
+    response = lambada_handler.handler(
         {"body": json.dumps(payload), "headers": {"Authorization": "Bearer secret"}},
         None,
     )
@@ -146,6 +146,6 @@ def test_requires_auth_header(monkeypatch):
     monkeypatch.setenv("API_AUTH_TOKEN", "secret")
     payload = _fresh_payload()
 
-    response = lambda_handler.handler({"body": json.dumps(payload)}, None)
+    response = lambada_handler.handler({"body": json.dumps(payload)}, None)
 
     assert response["statusCode"] == 401

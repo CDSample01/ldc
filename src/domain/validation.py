@@ -5,21 +5,10 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from exceptions import AuthorizationError, ValidationError
 
 ALLOWED_EVENT_CODES = {"110111"}
 ALLOWED_SCHEMA_VERSIONS = {"1.00", "1.01"}
-
-
-class ValidationError(Exception):
-    """Raised when payload validation fails."""
-
-
-class AuthorizationError(Exception):
-    """Raised when authorization/ownership rules are broken."""
-
-    def __init__(self, message: str, status_code: int = 403) -> None:
-        super().__init__(message)
-        self.status_code = status_code
 
 
 @dataclass
