@@ -11,7 +11,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from adapters.clients import dynamodb_client, sqs_client
 from config.config import EnvConfig
-from domain.validation import validate_payload
+from domain.services.validation import validate_payload
 from exceptions import AuthorizationError, ValidationError
 
 logger = logging.getLogger(__name__)
